@@ -1,0 +1,215 @@
+---
+title: "SOK-1004, høst 2024, Mappeoppgave"
+
+author: "23"
+
+format: pdf
+
+echo: false
+
+output: true
+
+editor: visual
+---
+
+## Oppgave 1 - Utvikling av ulikhetsmål i Norge over tid og mellom aldersgrupper
+
+I denne oppgaven skal vi laste ned data fra [OECD Income distribution database (IDD)](https://data-explorer.oecd.org/vis?lc=en&df%5Bds%5D=dsDisseminateFinalDMZ&df%5Bid%5D=DSD_WISE_IDD%40DF_IDD&df%5Bag%5D=OECD.WISE.INE&dq=.A.......&pd=%2C&to%5BTIME_PERIOD%5D=false) ved hjelp av deres [API-løsning](https://gitlab.algobank.oecd.org/public-documentation/dotstat-migration/-/raw/main/OECD_Data_API_documentation.pdf). Dette bruker en R-pakke som heter `rsdmx` som må installeres (`install.packages("rsdmx")`. API-spørringen lager man i IDD lenken gitt ovenfor ved å klikke på knappen "Developer API". Her ser du "Data query SDMX flavour". Ved å velge filtre på venstre siden av IDD siden endres denne spørringen. Velger jeg for eksempel Time period 2015-2023 og trykker på "Copy code" får jeg en URL som jeg kan buker i min spørring. Dere kan redusere størrelsen på datasettet ved å filtrere bort noen valg som er av mer metodologisk art. Velg for eksempel "Methodology: Income definition since 2012" og "Definition: Current definition" for å ta bort mange oberservasjoner. Jeg skal i tillegg velge ut de målene som jeg er interessert i Measure: Gini (disposable income), Gini (market income), Gini (gross income) og P90/P10. Så "Copy code"
+
+```{r warning=FALSE, message=FALSE}
+
+rm(list=ls()) 
+
+# laste pakken for å lese data samt tidyverse
+library(rsdmx)
+library(tidyverse)
+Sys.setlocale("LC_ALL", "norwegian")
+
+url <- "https://sdmx.oecd.org/public/rest/data/OECD.WISE.INE,DSD_WISE_IDD@DF_IDD,/NOR.A.D9_1_INC_DISP+INC_DISP_GINI+INC_GROSS_GINI+INC_MRKT_GINI...Y_GT65+Y18T65+_T.METH2012..?startPeriod=2015&endPeriod=2023&dimensionAtObservation=AllDimensions"
+
+data <- readSDMX(url)
+
+df <- as_tibble(data)
+
+```
+
+Da har vi fått en tibble som vi kan bruke til analyse. Det er mulig at dere vil filtrere bort noen observasjoner og ta bort noen kolonner i tibble som dere jobber med. Du kan også vurdere å gi bedre navn til dine variabler.
+
+Vi skal se på Norge mellom 2015-2023, og er interessert i å se hvordan alder påvirker de fire mål på ulikhet som vi har lastet ned
+
+Bruk datasettet til å lage to pene figur, hver med tre paneler (ved hjelp av `facets()` for eksempel). I hvert panel skal du tegne et plott med årstall på den horisontale `x`-aksen, og verdien på Gini (3 definisjoner) og P90/P10 på den vertikale `y`-aksen. Lag én figur for Gini og én for P90/P10.
+
+I det første panelet i figuren velger du hele befolkningen, i det andre panelet tar du de mellom 18-65, og i det tredje de som er over 65 år gammel. I datasettet heter disse `_T`, `Y18T65`, `Y_GT65` for variablen `AGE`. Gi hele figuren og hvert panel passende titler, og husk benevning av aksene, samt legende til figurene (plasser den gjerne under figuren).
+
+Gi en nøyaktig beskrivelse av figuren. og bruk den til å svare på følgende spørsmål:
+
+-   Hva viser Gini-målene om utviklingen av ulikhet i Norge?
+
+-   Hvordan forklarer man eventuelle forskjeller mellom de tre Gini-koeffisientene?
+
+-   Er det forskjeller i ulikhet mellom aldersgrupper?
+
+-   Hvilken rolle spiller samfunnets institusjoner, for eksempel skatte- og pensjonssystemet, for utjevning av ulikhet mellom aldersklassene?
+
+-   Viser utviklingen av P90/P10 det samme som Gini koeffisientene? Hvorfor/hvorfor ikke?
+
+-   Vi har data på alder. Hvorvidt kan vi bruke vår analyse for å danne et bilde om ulikhet og yrkesstatus? Hva trenger man av ekstra informasjon (data) for å gjennomføre en slik analyse.
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+df <- df %>% 
+  mutate(TIME_PERIOD = as.numeric(TIME_PERIOD))
+  
+df %>% 
+  filter(MEASURE!="D9_1_INC_DISP") %>% 
+  ggplot(aes(x=TIME_PERIOD, y=obsValue, color=MEASURE)) +
+  facet_wrap(~ AGE, ncol = 3, labeller = labeller(AGE = c(
+    "Y18T65" = "18 til 65", 
+    "Y_GT65" = "Over 65", 
+    "_T" = "Alle aldre"))) +
+  labs(x = "År",
+       y = "Livskvalitet",
+       color = "",
+       title = "") +
+  geom_point() +
+  geom_line() +
+  scale_color_discrete(labels = c("Gini disponibel", "Gini brutto", 
+                                  "Gini marked")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Jeg har brukt Github Copilot som hjelpe middel ved denne oppgaven.
+
+## Oppgave 2 - Er det en kobling mellom inntekt eller inntektsulikhet og livskvalitet?
+
+Det kan være nyttig å kjenne til [World Happiness Report 2024](https://worldhappiness.report/ed/2024/) for å løse denne oppgaven.
+
+Vi skal se på to mulige koblinger mellom lykke (dvs livskvalitet) og inntekt:
+
+1.  Er folk som bor i rike land generelt lykkeligere enn de som bor i fattige land?
+
+2.  Er folk som bor i land med lav inntektsulikhet lykkeligere enn de som bor i land med store inntektsforskjeller?
+
+For å svare på disse spørsmålene skal vi bruke data fra Eurostat. For a laste ned data direkte fra databasen må man installere R-pakken `eurostat` (`install.packages("eurostat")`). Tabellene hos Eurostat har en "Online data code" som vi bruker for å laste ned data. (Denne prosessen er mye enklere enn å laste ned fra SSB og OECD!). Vi skal bruke følgende tabeller
+
+-   ilc_pw01 - livskvalitet
+
+-   ilc_di12 - gini koeffisient
+
+-   nama_10_pc - bnp per person
+
+La oss laste ned data om livskvalitet:
+
+```{r warning=FALSE, message=FALSE}
+
+library(eurostat)
+
+livs_kval <- get_eurostat("ilc_pw01")  
+
+gini_koeffisient <- get_eurostat("ilc_di12")
+
+bnp_per_pers <- get_eurostat("nama_10_pc")
+
+```
+
+Se på datasettet (som er en tibble). Her ser vi at det er mange forkortelser som ikke nødvendigvis er lett å forstå. Heldigvis har pakken en måte å rydde på:
+
+```{r warning=FALSE, message=FALSE}
+
+livs_kval <-  livs_kval %>% 
+  label_eurostat() 
+
+gini_koeffisient <- gini_koeffisient %>% 
+  label_eurostat()
+
+bnp_per_pers <- bnp_per_pers %>% 
+  label_eurostat()
+
+```
+
+Her er det 10 variabler og mange observasjoner. Vi er interessert i et samlet mål for livskvalitet i landene som er med i datasettet, og vi vil bare måle ett enkelt år. Vi velger 2022 ettersom det finnes ikke mål på Gini etter dette hos Eurostat. Følgende kode gir oss det vi trenger, og tar bort samlingen av EU-statene, så velges det kun de kolonnene som vi er interessert i:
+
+```{r}
+livs_kval_22 <- livs_kval %>% 
+  filter(sex == "Total" &
+           TIME_PERIOD == "2022-01-01" &
+           age == "16 years or over" &
+           isced11 == "All ISCED 2011 levels" &
+           geo != "European Union - 27 countries (from 2020)") %>% 
+  rename("livskvalitet" = values) %>% 
+  select(geo, livskvalitet)
+```
+
+### Oppgave 2a
+
+\(i\) Last ned data fra de andre to tabellene, og lag ett datasett som viser tall som er representative verdier for Gini-koeffisienten, indeks for livskvalitet og BNP per capita for hvert land i datasettet. Du kan koble sammen datasett ved å bruke `inner_join()`: for eksempel `inner_join(data1, data2, by = "geo")`, hvor `data1` og `data2` er dine datasett.
+
+\(ii\) Forklar nøye hva tallene i datasettet representerer, og hvordan de er målt.
+
+```{r}
+
+```
+
+Values
+
+### Oppgave 2b
+
+Lag to pene figurer. I den ene plotter du bnp per capita mot livskvalitet, og i den andre Gini mot livskvalitet. Merk gjerne punktene i figuren med landnavn. Her kan R-pakken [ggrepel](https://cran.r-project.org/web/packages/ggrepel/vignettes/ggrepel.html) være nyttig. Bruk `geom_smooth(method = lm, se = FALSE)` for å se om det er en sammengeng i mellom variablene.
+
+```{r}
+library(ggrepel)
+
+
+```
+
+### Oppgave 2c
+
+-   Forklar figurene fra 2b nøye. Hva kan vi si (og ikke si) om sammenhengen mellom livskvalitet og inntekt og livskvalitet og inntektsulikhet. Hvordan kan dine funn forklares?
+
+-   Hvilke faktorer på samfunnsnivå tror du kan påvirke lykke uavhengig av inntekt, og hvordan påvirker disse faktorene egenskapene til spredningsplottene?
+
+Finn gjerne faglitteratur for å underbygge dine påstander.
+
+```{r}
+
+
+
+```
+
+# Oppgave 3 - Inntektsulikhet i Tromsø kommune
+
+I filen fra Forelesning 6 har vi data for 2015 om alder, kjønn, bosted, årstall, samt økonomisk data om inntekt, skatt og formue.
+
+```{r}
+
+url <- "https://raw.githubusercontent.com/uit-sok-1004-h24/uit-sok-1004-h24.github.io/main/data/skatt_troms_2015.RDS"
+
+skatt_troms_2015 <- url %>%
+  url() %>%
+  gzcon() %>% 
+  readRDS()
+```
+
+1.  Lag en ny variabel som viser inntekt etter skatt, og fjern negative verdier (forklar gjerne hvorfor).
+
+2.  Beregn gjennomsnittet for de økonomiske variablene (inntekt, inntekt etter skatt, skatt og formue). Undersøk hvordan gjennomsnittene og medianverdiene er i forhold til bosted. Du kan for eksempel se på geografisk inndeling av postnummer mellom Tromsøya, Kvaløya og fastlandet. Plassering av de ulike postnumre [kan du finne her](https://www.erikbolstad.no/postnummer-koordinatar/kommune.php?kommunenummer=5501). Tegn pene figurer som hjelper oss å visualisere dataene, og forklar hva de viser.
+
+3.  Bruk pakken [ineq](https://cran.r-project.org/web/packages/ineq/ineq.pdf) for å beregne Ginikoeffisienter for inntekt før og etter skatt for de ulike bydelene i Tromsø (velg selv geografisk inndeling). Vis resultatene i en pen figur.
+
+4.  Tenk at Tromsø kommune har som mål å få til en jevn inntektsfordeling blant sine innbyggere. Hvilke tiltak kan kommunen vurdere for ulike bydeler basert på dine svar til oppgave 3.2 og 3.3?
+
+```{r}
+#3.1
+
+skatt_troms_2015 <- skatt_troms_2015 %>%
+  mutate(inntekt_etter_skatt = inntekt - skatt)
+
+skatt_troms_2015 <- skatt_troms_2015 %>% 
+  filter(inntekt_etter_skatt >= 0)
+
+```
+
+Personer kan ha mer skatt enn inntekt, da formueskatt kan være høyere enn inntektene etter inntektsskatt. Derfor fjerner vi de negative tallene fra variabelen inntekt_etter_skatt.
