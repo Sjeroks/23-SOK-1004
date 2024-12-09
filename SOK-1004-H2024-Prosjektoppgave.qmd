@@ -1,0 +1,599 @@
+---
+title: "SOK-1004, høst 2024, Prosjektoppgave"
+author: "23"
+format: pdf
+echo: false
+output: true
+editor: visual
+---
+
+```{r message=FALSE, warning=FALSE}
+
+rm(list=ls()) 
+library(tidyverse)
+library(rsdmx)
+library(ggh4x)
+library(httr)
+library(jsonlite)
+library(tibble)
+library(rjstat)
+library(scales)
+library(cowplot)
+library(ggsci)
+
+invisible(Sys.setlocale("LC_ALL", "norwegian")) # Setter språk til norsk og skjuler output for rendering. 
+```
+
+# Prosjektoppgave Høst 2024
+
+## Kapittel 1 - Innledning
+
+I denne rapporten skal vi ta for oss produktivitetsvekst for representantforslaget om en nordisk produktivitetskomisjon. Vi skal se på produktivitetsvekst i Norge og noen utvalgte land for sammenligning. Målet er å evaluere om en slik kommisjon kan være hensiktsmessig, og hvilke tiltak som kan iverksettes for å styrke produktiviteten i Norge og de andre nordiske landene. Analysen legger vekt på å identifisere utfordringer og muligheter som kan bidra til en mer bærekraftig økonomisk vekst i regionen.
+
+## Kapittel 2 - Produktivitet - en internasjonal sammenligning
+
+```{r message=FALSE, warning=FALSE}
+
+url_oecd <- "https://sdmx.oecd.org/public/rest/data/OECD.SDD.TPS,DSD_PDB@DF_PDB_LV,/DNK+SWE+NOR+USA.A.GDPHRS..USD_PPP_H.Q...?startPeriod=1990&endPeriod=2023&dimensionAtObservation=AllDimensions" # URL til OECD-data
+
+data_oecd <- readSDMX(url_oecd) # Leser inn data fra OECD
+
+df_oecd <- as_tibble(data_oecd) # Konverterer til tibble
+
+
+#summary(df_oecd) # Sjekker dataene 
+#anyNA(df_oecd)   # Sjekker for manglende verdier
+# Bruker ikke denne koden da den har ett output jeg ikke vil ha med i rapporten, men vil ha med koden for å vise at jeg har sjekket dataene.
+
+df_oecd$TIME_PERIOD <- as.numeric(df_oecd$TIME_PERIOD) # Konverterer til numerisk
+df_oecd$obsValue <- as.numeric(df_oecd$obsValue)
+
+df_oecd <- df_oecd %>%
+  filter(!is.na(TIME_PERIOD) & !is.na(obsValue) & is.finite(TIME_PERIOD) & is.finite(obsValue)) # Fjerner manglende og uendelige verdier
+
+```
+
+```{r message=FALSE, warning=FALSE}
+
+#| label: figur-2.1
+
+#| fig-cap: "Arbeidsproduktivitet"
+
+df_oecd %>% 
+  ggplot(aes(x = TIME_PERIOD, y = obsValue, color = REF_AREA, group = REF_AREA)) + # Fargekoder etter land
+  geom_line(size = 0.8) +
+  geom_point(size = 1) +
+  labs(
+    title = "USD per arbeidstime",
+    subtitle = "Danmark, Sverige, Norge og USA (1990-2023)",
+    x = "År",
+    y = "USD per arbeidstime",
+    color = "Land:"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",                             # Flytter kategori til toppen
+    legend.title = element_text(size = 12),              # Justerer tekststørrelsen
+    legend.text = element_text(size = 12),
+    plot.title = element_text(face = "bold", size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1)    # Vinkler x-akse
+  ) +
+   scale_x_continuous(
+    breaks = seq(1990, 2023, by = 3),  # Viser hvert 3. år
+    limits = c(1990, 2023)             # Setter grensene på  x-aksen
+  )
+
+```
+
+Norge topper statistikken tydelig, men utviklingen har flatet ut og vil sannsynligvis bli innhentet dersom det ikke gjennomføres endringer. USA, Danmark og Sverige viser en mer stabil utvikling, med relativt jevne tall over tid. Rundt finanskrisen i 2008 opplevde Norge, Sverige og Danmark en negativ trend, mens USA derimot hadde en svak oppgang fra året før. Selv om USA ofte omtales som verdensledende innen produktivitet, er dette ikke helt presist, Norge ligger fortsatt foran med nesten 5 dollar, mens USA kun marginalt overgår Danmark.
+
+```{r}
+
+df_vekst <- df_oecd %>%
+  group_by(REF_AREA) %>%  # Gruppér etter land
+  arrange(TIME_PERIOD) %>%  # Sortér etter år
+  mutate(
+    growth_rate = 100 * (obsValue - lag(obsValue)) / lag(obsValue)  # Prosentvis endring
+  ) %>%
+  ungroup()
+
+#| label: figur-2.2
+
+#| fig-cap: "Årlig vekst"
+
+
+
+gjenn_prod <- df_vekst %>% # Beregner gjennomsnittlig produktivitetsvekst
+  mutate(periode = case_when(
+    TIME_PERIOD <= 2007 ~ "1990-2007", # Lager en periode for 1990-2007 som ble nevnt i representantforslaget
+    TIME_PERIOD > 2007 ~ "2008-2023"   # Lager en periode for 2008-2023 som ble beskrevet som negangsperiode
+  )) %>%
+  group_by(REF_AREA, periode) %>%      # Gruppér etter land og periode
+  summarise(
+    start_år = min(TIME_PERIOD),
+    slutt_år = max(TIME_PERIOD),
+    gj_produktivitet = mean(growth_rate, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(df_vekst, aes(x = TIME_PERIOD, y = growth_rate, fill = REF_AREA)) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  geom_segment(
+    data = gjenn_prod,
+    aes(
+      x = start_år, xend = slutt_år,
+      y = gj_produktivitet, yend = gj_produktivitet,
+      color = "black" #Av en grunn jeg ikke finner blir fargen oransje. 
+    ),
+    inherit.aes = FALSE,  # Unngå å bruke hoveddataens aes
+    size = 1
+  ) +  
+  scale_fill_npg() +      # Høykontrastfarger
+  facet_wrap(~ REF_AREA, ncol = 2, scales = "free_y") +  # Lager facets for hvert land
+  labs(
+    title = "Årlig vekst i produktivitet i %",
+    subtitle = "Sammenligning av Danmark, Sverige, Norge og USA (1990-2023)",
+    x = "År",
+    y = "Produktivitetsvekst i %",
+    fill = "Land:"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.margin = margin(10, 10, 10, 10)
+  ) +
+  scale_x_continuous(
+    breaks = seq(1990, 2023, by = 5),
+    limits = c(1990, 2023)
+  ) 
+ 
+```
+
+Produktivitetsveksten i Norge har vært svak siden 2005 og har ikke nådd nivåene fra tidligere år. Denne utviklingen er ikke unik da flere land har slitt med lav vekst, særlig etter finanskrisen i 2008. Ingen av de analyserte landene har klart å opprettholde eller overgå produktivitetsveksten fra før krisen.
+
+Norge topper fortsatt statistikken per innbygger, men veksten har stagnert, og landet risikerer å bli innhentet. USA har holdt en relativt stabil vekst sammenlignet med nivåene før 2008, men har heller ikke nådd tidligere høyder. Dette understreker behovet for tiltak, både nasjonalt og regionalt, for å styrke produktivitetsveksten og sikre fremtidig konkurranseevne.
+
+"Mange blander sammen vekst og nivå. Norge har et av verdens høyeste produktivitetsnivåer. Landet blir ikke fattigere fordi produktivitetsveksten på fastlandet er lavere enn før, sier Olav Slettebø, økonom i nasjonalregnskapsseksjonen i Statistisk sentralbyrå (SSB), til E24." (<https://e24.no/norsk-oekonomi/i/zAxylO/fallende-produktivitetsvekst-landet-blir-ikke-fattigere>)
+
+\
+
+## Kapittel 3 Produktivitet i Norge
+
+### Delkapittel 3.1
+
+```{r message=FALSE, warning=FALSE}
+
+url <- "https://data.ssb.no/api/v0/no/table/09174/" # URL til SSB-data
+
+query <- '{ 
+  "query": [
+    {
+      "code": "NACE",
+      "selection": {
+        "filter": "vs:NRNaeringPubAgg",
+        "values": [
+          "nr23_6",
+          "pub2X01_02",
+          "pub2X03",
+          "pub2X05",
+          "pub2X06",
+          "pub2X09",
+          "nr2310",
+          "nr2312",
+          "pub2X13_15",
+          "nr2315",
+          "nr2316",
+          "pub2X18",
+          "pub2X19_21",
+          "pub2X22_23",
+          "pub2X24",
+          "pub2X25_28",
+          "pub2X29_30",
+          "pub2X31_32",
+          "pub2X33",
+          "pub2X35",
+          "pub2X36_39",
+          "pub2X41_43",
+          "pub2X45_47",
+          "pub2X49B",
+          "pub2X50A",
+          "pub2X49A_52",
+          "pub2X53",
+          "pub2X55_56",
+          "pub2X58_63",
+          "pub2X64_66",
+          "pub2X68A",
+          "pub2X68B",
+          "pub2X69_75",
+          "pub2X77_82",
+          "pub2X84",
+          "pub2X85",
+          "pub2X86_88",
+          "pub2X90_97",
+          "nr24sivil",
+          "nr2482",
+          "nr25_"
+        ]
+      }
+    },
+    {
+      "code": "ContentsCode",
+      "selection": {
+        "filter": "item",
+        "values": [
+          "ProduksjonTimev"
+        ]
+      }
+    },
+    {
+      "code": "Tid",
+      "selection": {
+        "filter": "item",
+        "values": [
+          "1990",
+          "1991",
+          "1992",
+          "1993",
+          "1994",
+          "1995",
+          "1996",
+          "1997",
+          "1998",
+          "1999",
+          "2000",
+          "2001",
+          "2002",
+          "2003",
+          "2004",
+          "2005",
+          "2006",
+          "2007",
+          "2008",
+          "2009",
+          "2010",
+          "2011",
+          "2012",
+          "2013",
+          "2014",
+          "2015",
+          "2016",
+          "2017",
+          "2018",
+          "2019",
+          "2020",
+          "2021",
+          "2022",
+          "2023"
+        ]
+      }
+    }
+  ],
+  "response": {
+    "format": "json-stat2"
+  }
+}'
+
+hent_indeks.tmp <- url %>% 
+  POST(body = query, encode = "json") # Henter data fra SSB
+
+df_nor <- hent_indeks.tmp %>%         # Konverterer til tibble
+  content("text") %>%
+  fromJSONstat() %>%
+  as_tibble()
+
+df_nor <- df_nor %>%
+  rename(
+    arbeidsproduktivitet = value, # Endrer navn på kolonnen
+  ) %>%
+  mutate(
+    år = as.numeric(år)          # Konverterer år til numerisk
+  ) %>%
+  group_by(næring) %>%           # Grupperer etter næring
+  mutate(
+    endring = arbeidsproduktivitet - lag(arbeidsproduktivitet),  # Beregner endring i produktivitet
+    total_endring = arbeidsproduktivitet - first(arbeidsproduktivitet) 
+  ) %>%
+  ungroup()
+
+topp_næringer <- df_nor %>%        # Velger de fem næringene med størst endring
+  group_by(næring) %>%
+  summarize(total_endring = max(total_endring, na.rm = TRUE)) %>%
+  arrange(desc(total_endring)) %>%
+  slice_head(n = 5)
+
+bunn_næringer <- df_nor %>%       # Velger de fem næringene med minst endring
+  group_by(næring) %>%
+  summarize(total_endring = max(total_endring, na.rm = TRUE)) %>%
+  arrange(total_endring) %>%
+  slice_head(n = 5)
+
+#| label: figur-3.1.1
+
+#| fig-cap: "Generell utvikling"
+
+ggplot(df_nor, aes(x = år, y = arbeidsproduktivitet, color = næring)) + 
+  geom_line(alpha = 0.6) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",              # Flytter legenden til bunnen
+    legend.title = element_text(size = 8),   # Justerer  tekststørrelsen
+    legend.text = element_text(size = 5),    # Justerer størrelsen på kategoritekst
+    legend.key.width = unit(1, "cm"),        # Øker bredden på legendekey
+    legend.key.height = unit(0.4, "cm"),     # Justerer høyden for key
+    legend.box = "horizontal",               # Legger legenden horisontalt
+    plot.margin = margin(10, 10, 10, 10),    # Justerer margene for bedre plass
+    axis.text.y = element_blank()            # Fjerner tallene langs y-aksen
+  ) +
+  guides(color = guide_legend(ncol = 3)) +  # Legenden brytes opp i tre kolonner
+  labs(
+    title = "Utvikling i arbeidsproduktivitet i alle næringer",
+    x = "",
+    y = "",
+    color = "Næring"
+  )
+
+```
+
+Legend for alle de forskjellige næringene som er med i datasettet.
+
+```{r message=FALSE, warning=FALSE}
+
+#| label: figur-3.1.2
+
+#| fig-cap: "Topp-næringer"
+
+  ggplot(df_nor %>% filter(næring %in% topp_næringer$næring), aes(x = år, y = arbeidsproduktivitet, color = næring)) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",              
+    legend.title = element_text(size = 8),   
+    legend.text = element_text(size = 5),    
+    legend.key.width = unit(1, "cm"),        
+    legend.key.height = unit(0.4, "cm"),     
+    legend.box = "horizontal",               
+    plot.margin = margin(10, 10, 10, 10)     
+  ) +
+  guides(color = guide_legend(ncol = 3)) +   
+  labs(
+    title = "Næringer som bidrar mest til produktivitetsutviklingen",
+    x = "År",
+    y = "Arbeidsproduktivitet i %",
+    color = "Næring"
+  )
+```
+
+Det er tydelig at "Rørtransport" har hatt den største økningen i produktiviteten i Norge. Samtidig har også andre sektorer, som "Fiske, fangst og akvakultur" samt "Informasjon og kommunikasjon," vist betydelig vekst i produktiviteten. Likevel har "Rørtransport" også hatt den største negative endringen, noe som viser hvor volatil produktiviteten i oljebransjen kan være.
+
+```{r message=FALSE, warning=FALSE}
+
+#| label: figur-3.1.3
+
+#| fig-cap: "Bunn-næringer"
+
+ggplot(df_nor %>% filter(næring %in% bunn_næringer$næring), aes(x = år, y = arbeidsproduktivitet, color = næring)) +
+  geom_line(size = 1) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",              
+    legend.title = element_text(size = 8),   
+    legend.text = element_text(size = 5),    
+    legend.key.width = unit(1, "cm"),        
+    legend.key.height = unit(0.4, "cm"),     
+    legend.box = "horizontal",               
+    plot.margin = margin(10, 10, 10, 10)     
+  ) +
+  guides(color = guide_legend(ncol = 3)) +  
+  labs(
+    title = "Næringer som bidrar minst til produktivitetsutviklingen",
+    x = "År",
+    y = "Arbeidsproduktivitet i %",
+    color = "Næring"
+  )
+
+```
+
+Dette viser nok en gang at oljebransjen, sammenlignet med andre næringer, har en betydelig volatilitet i produktiviteten.
+
+Offentlig administrasjon og sivil forvaltning viser minst endring i produktivitetsvekst, delvis på grunn av manglende konkurranse som reduserer presset for å øke produktiviteten. Offentlige tjenester har primært som mål å levere høy kvalitet til befolkningen, snarere enn å generere profitt, noe som ofte prioriterer tjenestens verdi fremfor effektivisering.
+
+### Delkapittel 3.2
+
+```{r message=FALSE, warning=FALSE}
+
+#| label: fig-3.2
+
+#| fig-cap: "FoU i nærlingslivet"
+
+
+url <- "https://data.ssb.no/api/v0/no/table/07967/"
+
+query <- '{
+  "query": [
+    {
+      "code": "NACE2007",
+      "selection": {
+        "filter": "item",
+        "values": [
+          "A-N"
+        ]
+      }
+    },
+    {
+      "code": "SyssGrp",
+      "selection": {
+        "filter": "item",
+        "values": [
+          "Alle"
+        ]
+      }
+    },
+    {
+      "code": "ContentsCode",
+      "selection": {
+        "filter": "item",
+        "values": [
+          "FoUInvesteringer"
+        ]
+      }
+    }
+  ],
+  "response": {
+    "format": "json-stat2"
+  }
+}'
+
+hent_indeks.tmp <- url %>%
+  POST(body = query, encode = "json")
+
+df_fou <- hent_indeks.tmp %>%
+  content("text") %>%
+  fromJSONstat() %>%
+  as_tibble()
+
+df_fou <- df_fou %>% 
+  mutate(år = as.numeric(år))
+
+ggplot(df_fou, aes(x = år, y = value)) + 
+  geom_line(size = 1, color = "skyblue") +
+  geom_smooth(size = 0.5,color = "seagreen", se = FALSE) + # fjerner konfidensintervall
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",  
+    legend.title = element_text(size = 8),  
+    legend.text = element_text(size = 5),    
+    legend.key.width = unit(1, "cm"),        
+    legend.key.height = unit(0.4, "cm"),     
+    legend.box = "horizontal",               
+    plot.margin = margin(10, 10, 10, 10),
+    axis.text.x = element_text(angle = 45, hjust = 1)) +   
+  scale_x_continuous(
+    breaks = seq(min(df_fou$år, na.rm = TRUE), max(df_fou$år, na.rm = TRUE), by = 1)) + # viser flere år på x aksen
+  guides(color = guide_legend(ncol = 3)) +  
+  labs(
+    title = "Egenutført forskning og utvikling i næringslivet",
+    x = "År",
+    y = "FoU kostnader i millioner kroner"
+  )
+```
+
+"07967: Kostnader til egenutført FoU-aktivitet i næringslivet (mill. kr), etter statistikkvariabel, næring (SN2007), sysselsettingsgruppe og år." Utdrag fra informasjon om tabell fra SSB. (<https://www.ssb.no/statbank/table/07967/tableViewLayout1/>)
+
+Siden 2007 har næringslivet i Norge nesten doblet sine kostnader til forskning og utvikling (FoU). Fra rundt 1 500 millioner kroner i 2007 til nærmere 3 000 millioner kroner i 2022, viser denne utviklingen en betydelig økning i satsingen på innovasjon og teknologi. Denne veksten er en sterk indikasjon på at næringslivet i Norge prioriterer FoU som en driver for produktivitet og konkurransekraft.
+
+Dette øker både verdiskapingen og konkurranseevnen til norsk næringsliv, noe som er avgjørende for økonomisk vekst. Økte FoU-investeringer skaper også en positiv spiral ved å tiltrekke talent og forbedre kompetansen i arbeidsmarkedet.
+
+## Kapittel 4 - Velferdsstaten og produktivitet
+
+```{r message=FALSE, warning=FALSE}
+
+# Parametere 
+w <- 100  # Timelønn
+T <- 24   # Totalt antall timer tilgjengelig
+s <- 0.2  # Skattesats
+B <- 300  # Støttebeløp
+
+
+f_0 <- function(F) 100*(24 - F)                    # s = 0, B = 0
+f_1 <- function(F) w * (T - F) + B                 # s = 0, B > 0
+f_2 <- function(F) w * (T - F) * (1 - s)           # 1 > s > 0, B = 0
+f_3 <- function(F) w * (T - F) * (1 - s) + B       # 1 > s > 0, B > 0
+
+# Indifferenskurver
+I_0 <- function(F) (F > 0((100^2) / (F)) - (750-16.5*F)/0.5)  
+I_1 <- function(F) (20^2) / F  
+I_2 <- function(F) (25^2) / F  
+I_3 <- function(F) ((100^2) / F)*0.8 - (750 -16.5*F) /0.5
+
+# Definer aksene og layout
+axes <- ggplot() +
+  labs(x = "Timer", y = "Konsum kr") +
+  theme(
+    axis.title = element_text(size = 15),
+    plot.title = element_text(size = 15),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  coord_fixed(ratio = 0.005) +  # Juster forhold mellom aksene
+  scale_x_continuous(limits = c(0, T), expand = c(0, 0)) +
+  scale_y_continuous(limits = c(0, w * T + B + 100), expand = c(0, 0)) 
+
+
+figur <- axes +
+  labs(title = " ") +
+  stat_function(fun = f_0, aes(color = "Scenario 1"), size = 1) +
+  stat_function(fun = f_1, aes(color = "Scenario 2"), size = 1) +
+  stat_function(fun = f_2, aes(color = "Scenario 3"), size = 1) +
+  stat_function(fun = f_3, aes(color = "Scenario 4"), size = 1) +
+  stat_function(fun = I_0, linetype = "dashed", color = "black") +
+  stat_function(fun = I_1, linetype = "dashed", color = "black") +
+  stat_function(fun = I_2, linetype = "dashed", color = "black") +
+  stat_function(fun = I_3, linetype = "dashed", color = "black") +
+  annotate("text", x = 24, y = 750, label = expression(u[0]), size = 5) +
+  annotate("text", x = 24, y = 3000, label = expression(u[1]), size = 5) +
+  annotate("text", x = 24, y = 4000, label = expression(u[2]), size = 5) +
+  annotate("text", x = 24, y = 5000, label = expression(u[3]), size = 5) +
+  scale_color_manual(
+    name = "Scenarioer",
+    values = c("red", "blue", "green", "purple"),
+    labels = c("1: s=0, B=0", "2: s=0, B>0", "3: 1>s>0, B=0", "4: 1>s>0, B>0")
+  ) +
+  theme(
+    legend.position = "top",  # Plasser legend på toppen for bedre oversikt
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+
+figur
+```
+
+1\. 𝑠 = 0, 𝐵 = 0
+
+2\. 𝑠 = 0, 𝐵 \> 0
+
+3\. 1 \> 𝑠 \> 0, 𝐵 = 0
+
+4\. 1 \> 𝑠 \> 0, 𝐵 \> 0
+
+Fikk ikke helt til med denne figuren.
+
+Velferdsordninger og skattesystemet påvirker både individets arbeidskraftstilbud og produktiviteten i samfunnet. Generøse velferdsytelser, som dagpenger og uføretrygd, kan redusere arbeidskraftstilbudet ved å gjøre det mindre økonomisk fordelaktig å jobbe. Samtidig kan skattesystemet påvirke insentivene til å jobbe gjennom marginalskatt og skattefradrag. Mens høy skatt kan redusere gevinsten av ekstra arbeid, kan skattefradrag stimulere deltakelse i arbeidslivet.
+
+For produktivitetsanalyser er dette avgjørende fordi arbeidsdeltakelse og effektiv arbeidstid er grunnleggende faktorer. Politikk som balanserer økonomisk sikkerhet og arbeidsinsentiver bidrar til høyere samlet produktivitet, noe som styrker bærekraften i velferdsstaten.
+
+## Kapittel 5 - Konklusjon
+
+Analysen viser at Sverige og Danmark har opplevd en negativ trend i produktivitetsveksten siden 2008, mens Norge har hatt en tilsvarende negativ utvikling siden 2005 uten bedring. USA skiller seg ut som det landet med den mest stabile produktivitetsøkningen sammenlignet med de nordiske landene.
+
+Selv om Norge har økt sine investeringer i forskning og utvikling (FoU) betydelig siden 2007, har dette ennå ikke gitt utslag i økt produktivitetsvekst. Teknologi og innovasjon er viktige drivere for økt effektivitet og produksjon, men implementering tar tid og krever store investeringer. Samtidig viser dataene at produktivitetsveksten globalt har hatt en avmatning etter 2008, med de nordiske landene som ingen unntak.
+
+For å styrke produktiviteten i Norge og regionen som helhet, kan en nordisk produktivitetskommisjon være et avgjørende tiltak. En slik kommisjon vil kunne samle innsikt, dele beste praksis og identifisere målrettede strategier for å møte felles utfordringer. Det nordiske samarbeidet har allerede et solid fundament, og en produktivitetskommisjon fremstår som et naturlig neste steg for å sikre bærekraftig vekst og konkurransekraft i fremtiden.
+
+## Appendiks
+
+<https://data-explorer.oecd.org/vis?df%5Bds%5D=DisseminateFinalDMZ&df%5Bid%5D=DSD_PDB%40DF_PDB_LV&df%5Bag%5D=OECD.SDD.TPS&dq=DNK%2BSWE%2BNOR%2BUSA.A.GDPHRS..USD_PPP_H.Q...&pd=1990%2C2023&to%5BTIME_PERIOD%5D=false&vw=tb> (OECD link for kapittel 2)
+
+<https://www.ssb.no/statbank/table/09174/>
+
+<https://uit-sok-1004-h24.github.io/forelesninger/SOK-1004_Forelesning_10_h24.pdf>\
+<https://uit-sok-1004-h24.github.io/forelesninger/SOK-1004_Forelesning_11_h24.pdf> (Brukt Derek J Clark sine notater fra forelesning 10 og 11 for å forsøke å løse oppgaven i kapittel 4)
+
+<https://www.ssb.no/teknologi-og-innovasjon/forskning-og-innovasjon-i-naeringslivet/statistikk/forskning-og-utvikling-i-naeringslivet#om-statistikken>
+
+<https://openknowledge.worldbank.org/bitstream/handle/10986/34015/9781464816086.pdf> (Kapittel 2)
+
+<https://www.regjeringen.no/contentassets/ef2418d9076e4423ab5908689da67700/no/pdfs/nou201520150001000dddpdfs.pdf> (Kapittel 6)
+
+<https://e24.no/norsk-oekonomi/i/zAxylO/fallende-produktivitetsvekst-landet-blir-ikke-fattigere>
+
+<https://www.stortinget.no/no/Saker-og-publikasjoner/Publikasjoner/Representantforslag/2023-2024/dok8-202324-173s/>
+
+GitHUB COpilot er lagt inn i Rstudio, men er ikke noe særlig brukt.
+
+Har brukt ChatGPT til å delvis lage, rydde og fikse kode. Samt oppsummere og rydde i deler av teksten.
+
+Link til GitHub: <https://github.com/Sjeroks/23-SOK-1004>
+
+### 
